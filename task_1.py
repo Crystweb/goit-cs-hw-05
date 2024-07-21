@@ -1,60 +1,63 @@
+# Команда для запуску: python task_1.py /path/to/source_folder /path/to/output_folder
+
 import os
+import shutil
+import argparse
 import asyncio
-import aiofiles
 import logging
+from aiofiles import open as aio_open
+from aiofiles.os import listdir as aio_listdir, mkdir as aio_mkdir
+from aiofiles.ospath import isfile as aio_isfile, isdir as aio_isdir
 
-# Отримання абсолютного шляху до папки з програмою
-current_dir = os.path.dirname(os.path.abspath(__file__))
-log_file_path = os.path.join(current_dir, 'file_sorter.log')
-
-# Налаштування логування в файл
-logging.basicConfig(filename=log_file_path, level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# Налаштування логування
+logging.basicConfig(filename='file_sorter.log', level=logging.ERROR,
+                    format='%(asctime)s:%(levelname)s:%(message)s')
 
 
-async def copy_file(src, dest):
+# Асинхронна функція для копіювання файлів
+async def copy_file(src_path, dest_folder):
     try:
-        os.makedirs(os.path.dirname(dest), exist_ok=True)
-        async with aiofiles.open(src, 'rb') as fsrc:
-            async with aiofiles.open(dest, 'wb') as fdst:
-                while True:
-                    buffer = await fsrc.read(1024)
-                    if not buffer:
-                        break
-                    await fdst.write(buffer)
-        logging.info(f'Copied {src} to {dest}')
+        # Перевірка чи існує папка призначення, якщо ні - створення
+        if not await aio_isdir(dest_folder):
+            await aio_mkdir(dest_folder)
+
+        dest_path = os.path.join(dest_folder, os.path.basename(src_path))
+
+        async with aio_open(src_path, 'rb') as src_file, aio_open(dest_path, 'wb') as dest_file:
+            while True:
+                chunk = await src_file.read(1024)
+                if not chunk:
+                    break
+                await dest_file.write(chunk)
     except Exception as e:
-        logging.error(f'Error copying {src} to {dest}: {e}')
+        logging.error(f"Failed to copy {src_path} to {dest_folder}: {e}")
 
 
-async def read_folder(source_folder, output_folder):
-    tasks = []
-    for root, _, files in os.walk(source_folder):
-        for file in files:
-            src_path = os.path.join(root, file)
-            file_ext = os.path.splitext(file)[1].lstrip('.').lower()
-            dest_folder = os.path.join(output_folder, file_ext)
-            dest_path = os.path.join(dest_folder, file)
-            tasks.append(copy_file(src_path, dest_path))
-    await asyncio.gather(*tasks)
+# Асинхронна функція для рекурсивного читання папок та сортування файлів
+async def read_folder(src_folder, dest_folder):
+    try:
+        for entry in await aio_listdir(src_folder):
+            src_path = os.path.join(src_folder, entry)
+            if await aio_isfile(src_path):
+                file_ext = os.path.splitext(entry)[1].lstrip('.').lower()
+                if file_ext:
+                    target_folder = os.path.join(dest_folder, file_ext)
+                    await copy_file(src_path, target_folder)
+            elif await aio_isdir(src_path):
+                await read_folder(src_path, dest_folder)
+    except Exception as e:
+        logging.error(f"Failed to read folder {src_folder}: {e}")
 
 
-def main():
-    # Запит для вказування вихідної папки
-    source_folder = input("Please enter the path to the source folder: ")
-
-    if not os.path.exists(source_folder):
-        logging.error(f"Source folder '{source_folder}' does not exist.")
-        print(f"Source folder '{source_folder}' does not exist.")
-        return
-
-    # Запит для вказування цільової папки
-    output_folder = input("Please enter the path to the output folder: ")
-
-    if not os.path.exists(output_folder):
-        os.makedirs(output_folder)
-
-    asyncio.run(read_folder(source_folder, output_folder))
+async def main(source_folder, output_folder):
+    await read_folder(source_folder, output_folder)
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description='Sort files by extension.')
+    parser.add_argument('source_folder', type=str, help='Path to the source folder')
+    parser.add_argument('output_folder', type=str, help='Path to the destination folder')
+    args = parser.parse_args()
+
+    # Запуск асинхронного головного блоку
+    asyncio.run(main(args.source_folder, args.output_folder))
